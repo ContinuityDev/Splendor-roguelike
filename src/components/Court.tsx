@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { defOf } from "../game/cards";
 import {
+  canBankTurns,
   createCampaign,
   currentTarget,
   DISMANTLE_COST,
   ENHANCE_COST,
   HOUSE,
   isAffordable,
+  LEFTOVER_TURN_PRESTIGE,
   reduce,
   tokenCount,
   totalPrestige,
@@ -113,7 +115,9 @@ export function Court() {
   }
 
   const overlay = state.phase !== "playing";
-  const boardMode = overlay ? undefined : intent === "reserve" ? "reserve" : "buy";
+  const boardMode = overlay ? undefined : intent === "take" ? undefined : intent;
+  const canBank = canBankTurns(state);
+  const bankPrestige = state.turnsLeft * LEFTOVER_TURN_PRESTIGE;
 
   return (
     <div className="court">
@@ -126,6 +130,17 @@ export function Court() {
             no token caps. Built for a phone in portrait as well as a desktop browser.
           </p>
         </div>
+        {canBank && (
+          <div className="bank-banner">
+            <p>
+              Target met. Bank leftover turns ({LEFTOVER_TURN_PRESTIGE} prestige each) or keep
+              playing.
+            </p>
+            <button type="button" onClick={() => dispatch({ type: "bank-turns" })}>
+              End now · +{bankPrestige}
+            </button>
+          </div>
+        )}
         <dl className="hud">
           <div>
             <dt>Sector</dt>
@@ -159,7 +174,10 @@ export function Court() {
         <h2>Market</h2>
         {([3, 2, 1] as const).map((rank) => (
           <div key={rank} className="market-row">
-            <h3>{rank === 1 ? "★ Engine" : rank === 2 ? "★★ Mid" : "★★★ Payoff"}</h3>
+            <h3>
+              {rank === 1 ? "★" : rank === 2 ? "★★" : "★★★"}
+              <span className="rank-name">{rank === 1 ? "Engine" : rank === 2 ? "Mid" : "Payoff"}</span>
+            </h3>
             <div className="card-grid">
               {state.market[rank].map((cardId, index) => (
                 <DevCard
@@ -187,7 +205,7 @@ export function Court() {
                 onClick={() => clickGem(color)}
                 disabled={state.phase !== "playing" || intent !== "take"}
               >
-                <GemIcon color={color} size={34} count={state.tokens[color]} />
+                <GemIcon color={color} size={22} count={state.tokens[color]} />
                 <span>
                   {HOUSE[color].gem}
                   {times > 0 ? ` · ${times} selected` : ""}
@@ -200,10 +218,10 @@ export function Court() {
         <div className="take-row">
           <p>
             {canTakeTwo
-              ? `Ready: take two ${HOUSE[picked[0]!].gem}s.`
+              ? `Two ${HOUSE[picked[0]!].gem}s ready.`
               : canTakeThree
-                ? "Ready: take three different treasures."
-                : "Tap 3 different gems, or the same gem twice, then Take."}
+                ? "Three treasures ready."
+                : "3 different, or same twice."}
           </p>
         </div>
       </section>
@@ -212,8 +230,8 @@ export function Court() {
         <div className="holdings-wrap">
           <div>
             <h2>Tableau</h2>
-            <div className="card-grid">
-              {state.tableau.length === 0 && <p className="muted">No charters in the hall yet.</p>}
+            <div className="tableau-strip">
+              {state.tableau.length === 0 && <p className="muted">Empty hall.</p>}
               {state.tableau.map((cardId) => (
                 <DevCard key={cardId} cardId={cardId} state={state} />
               ))}
@@ -334,6 +352,9 @@ export function Court() {
                   {state.lastWin.prestige}/{state.lastWin.target}. Overshoot {state.lastWin.overshoot}{" "}
                   paid ${state.lastWin.money}
                   {state.lastWin.boss ? " (boss purse)." : "."}
+                  {state.lastWin.bankedTurns > 0
+                    ? ` Banked ${state.lastWin.bankedTurns} leftover turns.`
+                    : ""}
                 </p>
               )}
               <p>Tap a charter, then tap a rank-locked seal. Seals stay under your pick.</p>
@@ -417,7 +438,10 @@ export function Court() {
             state.phase === "dismantle") && (
             <dialog className="scroll wide shop" open>
               <h2>The royal shop</h2>
-              <p>After the boss. Enhance $4 · Dismantle $3 · each once. Purse ${state.wallet}.</p>
+              <p>
+                Spend the purse after a win. Enhance ${ENHANCE_COST} · Dismantle ${DISMANTLE_COST} ·
+                each once. Purse ${state.wallet}.
+              </p>
               <div className="stalls">
                 <article className="stall enhance">
                   <svg viewBox="0 0 120 80" className="stall-art" aria-hidden="true">

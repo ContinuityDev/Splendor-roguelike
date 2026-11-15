@@ -94,11 +94,15 @@ describe("campaign loop", () => {
     state = reduce(state, { type: "buy", cardId: targetId });
     expect(state.tableau).toContain(targetId);
     expect(totalPrestige(state)).toBeGreaterThanOrEqual(1);
-    expect(state.phase === "upgrade" || state.phase === "shop" || state.phase === "playing").toBe(true);
-    if (state.phase === "upgrade") {
-      expect(state.lastWin?.target).toBe(1);
-      expect(discountsFrom(state)[def.bonus]).toBeGreaterThanOrEqual(1);
-    }
+    expect(state.phase).toBe("playing");
+    expect(state.turnsLeft).toBeGreaterThan(0);
+    expect(discountsFrom(state)[def.bonus]).toBeGreaterThanOrEqual(1);
+    const leftover = state.turnsLeft;
+    state = reduce(state, { type: "bank-turns" });
+    expect(state.phase).toBe("upgrade");
+    expect(state.lastWin?.target).toBe(1);
+    expect(state.lastWin?.bankedTurns).toBe(leftover);
+    expect(state.lastWin?.prestige).toBe(totalPrestige(state) + leftover);
   });
 
   it("reserves one face-up card and refuses a second reserve", () => {
@@ -111,17 +115,22 @@ describe("campaign loop", () => {
     expect(() => reduce(state, { type: "reserve", cardId: second })).toThrow(/full/);
   });
 
-  it("converts overshoot to money and opens the shop after a boss win", () => {
+  it("converts overshoot to money and opens the shop after every win", () => {
     let state = createCampaign(5);
     state = play(state, { type: "debug-win" });
     expect(state.phase).toBe("upgrade");
     expect(state.lastWin?.money).toBe(2);
     const cardId = state.collection[0]!.id;
     state = reduce(state, { type: "choose-upgrade", cardId, upgradeId: "purse" });
+    expect(state.phase).toBe("shop");
+    expect(state.roundInSector).toBe(1);
+    state = reduce(state, { type: "shop-skip" });
     expect(state.roundInSector).toBe(2);
     state = play(state, { type: "debug-win" });
     const mid = state.collection.find((card) => !card.upgrade && card.id.startsWith("t2"))!.id;
     state = reduce(state, { type: "choose-upgrade", cardId: mid, upgradeId: "flourish" });
+    expect(state.phase).toBe("shop");
+    state = reduce(state, { type: "shop-skip" });
     expect(state.roundInSector).toBe(3);
     expect(currentTarget(state)).toBe(3);
     state = play(state, { type: "debug-win" });
@@ -131,6 +140,9 @@ describe("campaign loop", () => {
     state = reduce(state, { type: "choose-upgrade", cardId: late, upgradeId: "treasury" });
     expect(state.phase).toBe("shop");
     expect(state.wallet).toBeGreaterThanOrEqual(4);
+    state = reduce(state, { type: "shop-skip" });
+    expect(state.sector).toBe(2);
+    expect(state.roundInSector).toBe(1);
   });
 
   it("retries the same round after a loss without touching the wallet", () => {
@@ -146,6 +158,28 @@ describe("campaign loop", () => {
     expect(state.wallet).toBe(9);
     expect(state.turnsLeft).toBe(20);
     expect(state.tableau).toEqual([]);
+  });
+
+  it("refuses to bank leftover turns before the target", () => {
+    expect(() => reduce(createCampaign(12), { type: "bank-turns" })).toThrow(/satisfied/);
+  });
+
+  it("wins with no banked turns if you play out the clock after the target", () => {
+    let state = createCampaign(11);
+    const cardId =
+      state.collection.find((card) => CARD_DEFS.find((def) => def.id === card.id)?.prestige === 1)
+        ?.id ?? state.collection[0]!.id;
+    state = {
+      ...state,
+      tableau: [cardId],
+      boughtThisRound: [cardId],
+      turnsLeft: 1,
+    };
+    expect(totalPrestige(state)).toBeGreaterThanOrEqual(1);
+    state = reduce(state, { type: "take-two", color: "white" });
+    expect(state.phase).toBe("upgrade");
+    expect(state.lastWin?.bankedTurns).toBe(0);
+    expect(state.lastWin?.prestige).toBe(totalPrestige(state));
   });
 });
 
@@ -179,7 +213,8 @@ describe("upgrades", () => {
     const prestige = CARD_DEFS.find((def) => def.id === card)!.prestige;
     state = reduce(state, { type: "buy", cardId: card });
     if (prestige >= 1) {
-      expect(state.phase).toBe("upgrade");
+      expect(state.phase).toBe("playing");
+      expect(state.turnsLeft).toBe(before);
     } else {
       expect(state.turnsLeft).toBe(before);
     }

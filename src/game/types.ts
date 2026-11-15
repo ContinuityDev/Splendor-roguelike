@@ -74,6 +74,7 @@ export interface GameState {
     overshoot: number;
     money: number;
     boss: boolean;
+    bankedTurns: number;
   } | null;
   shop: { enhance: boolean; dismantle: boolean };
   pendingScrap: string[];
@@ -102,5 +103,6 @@ export type GameAction =
   | { type: "pick-enhance-upgrade"; upgradeId: UpgradeId }
   | { type: "pick-dismantle"; cardId: string }
   | { type: "retry" }
+  | { type: "bank-turns" }
   | { type: "debug-win" }
   | { type: "new-campaign" };
