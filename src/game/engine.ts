@@ -28,6 +28,8 @@ const MARKET_WIDTH = 4;
 const TURN_LIMIT = 20;
 const ENHANCE_COST = 4;
 const DISMANTLE_COST = 3;
+/** Leftover turns bank as prestige when you end a won round early. */
+const LEFTOVER_TURN_PRESTIGE = 1;
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -296,13 +298,12 @@ function enterUpgrade(state: GameState): GameState {
 }
 
 function advanceAfterReward(state: GameState): GameState {
-  if (isBoss(state.roundInSector)) {
-    return log(
-      { ...state, phase: "shop", shop: { enhance: false, dismantle: false } },
-      "The boss chamber falls. The royal shop opens.",
-    );
-  }
-  return startNextRound(state);
+  return log(
+    { ...state, phase: "shop", shop: { enhance: false, dismantle: false } },
+    isBoss(state.roundInSector)
+      ? "The boss chamber falls. The royal shop opens."
+      : "The court pays. The royal shop opens.",
+  );
 }
 
 function startNextRound(state: GameState): GameState {
@@ -383,6 +384,12 @@ function applyOnBuy(state: GameState, cardId: string): GameState {
   return resolveAfterBuy(next, cardId);
 }
 
+function justCrossedTarget(state: GameState, boughtId: string | null, target: number): boolean {
+  const prestige = totalPrestige(state);
+  if (prestige < target || !boughtId) return false;
+  return prestige - cardPrestigeThisRound(state, boughtId) < target;
+}
+
 function applyTurnAndScore(state: GameState, boughtId: string | null): GameState {
   const upgrade = boughtId ? cardOf(state, boughtId).upgrade : undefined;
   let turnsLeft = state.turnsLeft;
@@ -395,7 +402,14 @@ function applyTurnAndScore(state: GameState, boughtId: string | null): GameState
   const prestige = totalPrestige(next);
   const target = currentTarget(next);
   if (prestige >= target) {
-    return winRound(next, prestige, target);
+    if (turnsLeft <= 0) return winRound(next, prestige, target);
+    if (justCrossedTarget(next, boughtId, target)) {
+      return log(
+        next,
+        `Target met. Bank leftover turns as prestige (${LEFTOVER_TURN_PRESTIGE} each), or keep playing.`,
+      );
+    }
+    return next;
   }
   if (turnsLeft <= 0) {
     return log(
@@ -406,14 +420,48 @@ function applyTurnAndScore(state: GameState, boughtId: string | null): GameState
   return next;
 }
 
-function winRound(state: GameState, prestige: number, target: number): GameState {
+export function canBankTurns(state: GameState): boolean {
+  return (
+    state.phase === "playing" &&
+    state.turnsLeft > 0 &&
+    totalPrestige(state) >= currentTarget(state)
+  );
+}
+
+function bankTurns(state: GameState): GameState {
+  assertPlaying(state);
+  const prestige = totalPrestige(state);
+  const target = currentTarget(state);
+  if (prestige < target) throw new Error("The court is not yet satisfied");
+  const bankedTurns = state.turnsLeft;
+  const bankedPrestige = bankedTurns * LEFTOVER_TURN_PRESTIGE;
+  const finalPrestige = prestige + bankedPrestige;
+  return winRound(
+    log(
+      { ...state, turnsLeft: 0 },
+      bankedTurns > 0
+        ? `Banked ${bankedTurns} leftover turns as ${bankedPrestige} prestige.`
+        : "No leftover turns to bank.",
+    ),
+    finalPrestige,
+    target,
+    bankedTurns,
+  );
+}
+
+function winRound(
+  state: GameState,
+  prestige: number,
+  target: number,
+  bankedTurns = 0,
+): GameState {
   const boss = isBoss(state.roundInSector);
   const { overshoot, money } = moneyFromWin(prestige, target, boss);
   const next = log(
     {
       ...state,
       wallet: state.wallet + money,
-      lastWin: { prestige, target, overshoot, money, boss },
+      lastWin: { prestige, target, overshoot, money, boss, bankedTurns },
       phase: "upgrade",
     },
     boss
@@ -578,10 +626,7 @@ function resolveExile(state: GameState, cardId: string | null): GameState {
 
 function shopSkip(state: GameState): GameState {
   if (state.phase !== "shop") throw new Error("The shop is closed");
-  const seed = bumpSeed(state.seed);
-  const nextSector = state.sector + 1;
-  const dealt = dealRound({ ...state, sector: nextSector, roundInSector: 1 }, seed);
-  return log(dealt, `The caravan moves on. Sector ${nextSector} opens. Target: ${roundTarget(nextSector, 1)}.`);
+  return startNextRound(state);
 }
 
 function beginEnhance(state: GameState): GameState {
@@ -697,6 +742,8 @@ export function reduce(state: GameState, action: GameAction): GameState {
       return pickDismantle(working, action.cardId);
     case "retry":
       return retryRound(working);
+    case "bank-turns":
+      return bankTurns(working);
     case "debug-win":
       return debugWin(working);
     case "new-campaign":
@@ -728,4 +775,14 @@ export function tokenCount(tokens: Tokens): number {
   return GEM_COLORS.reduce((sum, color) => sum + tokens[color], 0);
 }
 
-export { CARD_DEFS, defOf, DISMANTLE_COST, ENHANCE_COST, TURN_LIMIT, eligibleUpgradeCards, exileTargets, unupgradedIds };
+export {
+  CARD_DEFS,
+  defOf,
+  DISMANTLE_COST,
+  ENHANCE_COST,
+  LEFTOVER_TURN_PRESTIGE,
+  TURN_LIMIT,
+  eligibleUpgradeCards,
+  exileTargets,
+  unupgradedIds,
+};
